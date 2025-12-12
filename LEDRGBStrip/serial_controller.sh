@@ -1,23 +1,31 @@
 #!/bin/bash
 
-# Serial controller for Color Shooter Game
-# Sends 'a' (shoot) and 'd' (change color) to Arduino
+# Serial controller for LED Strip Games
+# Controls games via serial on Arduino
 
 SERIAL_PORT="/dev/ttyACM0"
 BAUD_RATE=9600
-SERIAL_FD=3
 
 # Save terminal settings
 old_stty=""
+serial_connected=1
+drain_pid=""
 
 # Cleanup function
 cleanup() {
-    # Close serial port file descriptor
+    # Kill the drain process if running
+    if [ -n "$drain_pid" ] && kill -0 "$drain_pid" 2>/dev/null; then
+        kill "$drain_pid" 2>/dev/null
+        wait "$drain_pid" 2>/dev/null
+    fi
+    
+    # Close serial port file descriptors
     exec 3>&- 2>/dev/null
+    exec 4<&- 2>/dev/null
     
     # Restore terminal settings
     if [ -n "$old_stty" ]; then
-        stty "$old_stty"
+        stty "$old_stty" 2>/dev/null
     fi
     
     echo ""
@@ -28,10 +36,26 @@ cleanup() {
 # Trap ctrl+c and call cleanup
 trap cleanup INT EXIT
 
+# Function to drain serial input in background
+start_drain() {
+    # Read and discard all incoming serial data to prevent Arduino TX buffer backup
+    while true; do
+        cat <&4 >/dev/null 2>&1
+    done &
+    drain_pid=$!
+}
+
 # Function to open/reconnect serial port
 open_serial() {
-    # Close existing connection if open
+    # Kill existing drain process
+    if [ -n "$drain_pid" ] && kill -0 "$drain_pid" 2>/dev/null; then
+        kill "$drain_pid" 2>/dev/null
+        wait "$drain_pid" 2>/dev/null
+    fi
+    
+    # Close existing connections if open
     exec 3>&- 2>/dev/null
+    exec 4<&- 2>/dev/null
     
     echo ""
     echo "Connecting to $SERIAL_PORT..."
@@ -41,41 +65,66 @@ open_serial() {
         echo "Error: $SERIAL_PORT not found!"
         echo "Make sure your Arduino is connected."
         echo "Press [R] to retry or [Q] to quit."
+        serial_connected=1
         return 1
     fi
     
-    # Configure serial port
-    stty -F "$SERIAL_PORT" $BAUD_RATE cs8 -cstopb -parenb -echo 2>/dev/null
+    # Configure serial port with raw mode and no flow control
+    stty -F "$SERIAL_PORT" $BAUD_RATE cs8 -cstopb -parenb raw -echo -ixon -ixoff 2>/dev/null
     if [ $? -ne 0 ]; then
         echo "Error: Failed to configure $SERIAL_PORT"
         echo "Press [R] to retry or [Q] to quit."
+        serial_connected=1
         return 1
     fi
     
-    # Open serial port on file descriptor 3 for writing
+    # Open serial port for writing (fd 3) and reading (fd 4)
     exec 3>"$SERIAL_PORT"
+    exec 4<"$SERIAL_PORT"
+    
     if [ $? -ne 0 ]; then
         echo "Error: Failed to open $SERIAL_PORT"
         echo "Press [R] to retry or [Q] to quit."
+        serial_connected=1
         return 1
     fi
     
+    # Start draining Arduino output in background
+    start_drain
+    
     echo "Connected to $SERIAL_PORT at $BAUD_RATE baud"
     echo ""
+    serial_connected=0
     return 0
 }
 
 print_help() {
-    echo "=== Color Shooter Serial Controller ==="
+    echo "========================================="
+    echo "     LED STRIP GAMES - Serial Controller"
+    echo "========================================="
     echo ""
-    echo "Controls:"
-    echo "  [A] - Shoot"
-    echo "  [D] - Change Color"
+    echo "Game Selection:"
+    echo "  [1] - Color Shooter"
+    echo "  [2] - Tug of War"
+    echo "  [3] - Reaction Zone"
+    echo "  [0] - Back to Menu"
+    echo ""
+    echo "Game Controls:"
+    echo "  [A] - Primary Action (Shoot / Pull / Stop)"
+    echo "  [D] - Secondary Action (Change Color)"
+    echo ""
+    echo "System:"
     echo "  [R] - Reconnect Serial"
+    echo "  [H] - Show this help"
     echo "  [Q] - Quit"
     echo ""
-    echo "Press keys to play!"
-    echo "========================================"
+    echo "========================================="
+}
+
+send_char() {
+    if [ $serial_connected -eq 0 ]; then
+        printf '%s' "$1" >&3 2>/dev/null
+    fi
 }
 
 # Print help
@@ -86,36 +135,46 @@ old_stty=$(stty -g)
 
 # Initial serial connection
 open_serial
-serial_connected=$?
 
-# Set terminal to raw mode (no need to press Enter)
-stty raw -echo
+# Set terminal to raw mode with immediate input (no buffering)
+stty raw -echo min 0 time 1
 
-# Main loop - read single characters
+# Main loop - read single characters using bash builtin
 while true; do
     # Read a single character
-    char=$(dd bs=1 count=1 2>/dev/null)
-    
-    case "$char" in
-        a|A)
-            if [ $serial_connected -eq 0 ]; then
-                echo -n "a" >&3 2>/dev/null
-            fi
-            ;;
-        d|D)
-            if [ $serial_connected -eq 0 ]; then
-                echo -n "d" >&3 2>/dev/null
-            fi
-            ;;
-        r|R)
-            # Temporarily restore terminal for output
-            stty "$old_stty"
-            open_serial
-            serial_connected=$?
-            stty raw -echo
-            ;;
-        q|Q)
-            cleanup
-            ;;
-    esac
+    # -n 1: read exactly 1 character
+    # -s: silent (don't echo)
+    # -t 0.02: small timeout to keep loop responsive
+    if IFS= read -rsn1 -t 0.02 char && [ -n "$char" ]; then
+        case "$char" in
+            # Game selection
+            0|1|2|3)
+                send_char "$char"
+                ;;
+            # Primary action (shoot / pull)
+            a|A)
+                send_char "a"
+                ;;
+            # Secondary action (change color)
+            d|D)
+                send_char "d"
+                ;;
+            # Reconnect serial
+            r|R)
+                stty "$old_stty"
+                open_serial
+                stty raw -echo min 0 time 1
+                ;;
+            # Show help
+            h|H)
+                stty "$old_stty"
+                print_help
+                stty raw -echo min 0 time 1
+                ;;
+            # Quit
+            q|Q)
+                cleanup
+                ;;
+        esac
+    fi
 done

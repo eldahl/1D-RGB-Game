@@ -4,12 +4,22 @@
 #define PIN 4
 #define LED_COUNT 60
 
-// Button pins for the Color Shooter game
-#define SHOOT_BUTTON_PIN 2    // Button to shoot
-#define COLOR_BUTTON_PIN 3    // Button to change player color
+// Button pins for games
+#define BUTTON_A_PIN 2    // Primary action button (shoot / pull)
+#define BUTTON_B_PIN 3    // Secondary action button (change color)
 
 // Library for WS2812 by Adafruit
 Adafruit_NeoPixel leds = Adafruit_NeoPixel(LED_COUNT, PIN, NEO_GRB + NEO_KHZ800);
+
+// ============================================
+// GAME SELECTION
+// ============================================
+#define GAME_MENU 0
+#define GAME_COLOR_SHOOTER 1
+#define GAME_TUG_OF_WAR 2
+#define GAME_REACTION_ZONE 3
+
+int currentGame = GAME_MENU;
 
 // ============================================
 // COLOR SHOOTER GAME VARIABLES
@@ -52,59 +62,145 @@ bool colorBlinkState = true;
 unsigned long lastShootPress = 0;
 unsigned long lastColorPress = 0;
 const unsigned long DEBOUNCE_DELAY = 150;
+const unsigned long COLOR_CHANGE_DELAY = 50;  // Faster color cycling
+
+// ============================================
+// TUG OF WAR GAME VARIABLES
+// ============================================
+float ropePosition = 0.0;             // Position: negative = player side, positive = CPU side
+const float ROPE_MAX = 25.0;          // Distance to win (in LED units)
+float playerPullStrength = 2.0;       // How much each pull moves the rope
+float cpuPullStrength = 0.15;         // CPU pulls continuously at this rate
+float cpuPullVariance = 0.1;          // Random variance in CPU pull
+unsigned long lastCpuPull = 0;
+unsigned long cpuPullInterval = 50;   // CPU pulls every X ms
+unsigned long lastRopeRender = 0;
+bool towGameOver = false;
+bool playerWon = false;
+unsigned long towGameOverTime = 0;
+
+// CPU difficulty increases over time
+unsigned long towGameStartTime = 0;
+float cpuDifficultyMultiplier = 1.0;
+
+// ============================================
+// REACTION ZONE GAME VARIABLES
+// ============================================
+int rzLightPosition = 0;              // Current position of the bouncing light
+int rzLightDirection = 1;             // 1 = moving up (towards high index), -1 = moving down
+int rzZoneStart = 0;                  // Start of the goal zone (at bottom/low index)
+int rzZoneSize = 10;                  // Size of the goal zone in LEDs
+int rzSpeed = 30;                     // ms between light moves (lower = faster)
+int rzLevel = 1;                      // Current level
+int rzScore = 0;                      // Score
+bool rzGameOver = false;
+bool rzWaitingForRelease = false;     // Prevent holding the button
+unsigned long rzLastMove = 0;
+unsigned long rzGameOverTime = 0;
 
 void setup() {
     Serial.begin(9600);
+    randomSeed(analogRead(0));
     
     // Setup button pins
-    pinMode(SHOOT_BUTTON_PIN, INPUT_PULLUP);
-    pinMode(COLOR_BUTTON_PIN, INPUT_PULLUP);
+    pinMode(BUTTON_A_PIN, INPUT_PULLUP);
+    pinMode(BUTTON_B_PIN, INPUT_PULLUP);
     
     leds.begin();
     leds.setBrightness(100);
     clearLEDs();
     leds.show();
     
-    // Initialize game
-    initColorShooterGame();
+    // Show game menu
+    showGameMenu();
 }
 
-/*
-    0: Ping pong        A-->B-->A..
-    1: Rainbow
-    2: Ping no-Pong     A-->B
-    3: Color Shooter Game
-*/
 void loop() {
-    // Run the Color Shooter Game
-    colorShooterGame();
+    // Check for game selection via serial
+    checkGameSelection();
     
-    // Uncomment below for other modes:
-    /*
-    // Ping pong
-    for (int i=0; i<3; i++) {
-        cylon(RED, 75); 
+    // Run the currently selected game
+    switch (currentGame) {
+        case GAME_MENU:
+            runGameMenu();
+            break;
+        case GAME_COLOR_SHOOTER:
+            colorShooterGame();
+            break;
+        case GAME_TUG_OF_WAR:
+            tugOfWarGame();
+            break;
+        case GAME_REACTION_ZONE:
+            reactionZoneGame();
+            break;
     }
-    */
-    
-    //for (int i=0; i < LED_COUNT * 2; i++) {
-    //    rainbow(i);
-    //    delay(150);
-    //}
-    
-    /*
-    // Cascade
-    cascade(DEEPSKYBLUE, TOP_DOWN, 100);
-    cascade(GREEN, TOP_DOWN, 100);
-    cascade(ORANGERED, TOP_DOWN, 100);
-    cascade(RED, TOP_DOWN, 100);
-    
-    setAllColor(255,100,0);
-    
-    delay(20000);
-    */
+}
 
-    //rainbowFull(15);
+// ============================================
+// GAME MENU FUNCTIONS
+// ============================================
+
+void showGameMenu() {
+    Serial.println("");
+    Serial.println("========================================");
+    Serial.println("       LED STRIP GAME SELECTOR");
+    Serial.println("========================================");
+    Serial.println("");
+    Serial.println("Press a number to select a game:");
+    Serial.println("");
+    Serial.println("  [1] Color Shooter");
+    Serial.println("      Shoot matching colors to destroy");
+    Serial.println("      falling enemies!");
+    Serial.println("");
+    Serial.println("  [2] Tug of War");
+    Serial.println("      Mash the button to beat the CPU!");
+    Serial.println("");
+    Serial.println("  [3] Reaction Zone");
+    Serial.println("      Stop the light in the zone!");
+    Serial.println("");
+    Serial.println("========================================");
+    currentGame = GAME_MENU;
+}
+
+void checkGameSelection() {
+    // Only check for game selection when in menu
+    if (currentGame != GAME_MENU) return;
+    
+    // Drain buffer to prevent backup
+    while (Serial.available() > 0) {
+        char input = Serial.read();
+        
+        if (input == '1') {
+            currentGame = GAME_COLOR_SHOOTER;
+            initColorShooterGame();
+            return;
+        } else if (input == '2') {
+            currentGame = GAME_TUG_OF_WAR;
+            initTugOfWarGame();
+            return;
+        } else if (input == '3') {
+            currentGame = GAME_REACTION_ZONE;
+            initReactionZoneGame();
+            return;
+        }
+    }
+}
+
+void runGameMenu() {
+    // Animate rainbow while waiting for selection
+    static unsigned long lastUpdate = 0;
+    static int offset = 0;
+    
+    if (millis() - lastUpdate > 50) {
+        lastUpdate = millis();
+        offset = (offset + 1) % 192;
+        
+        for (int i = 0; i < LED_COUNT; i++) {
+            int pos = (i * 192 / LED_COUNT + offset) % 192;
+            leds.setPixelColor(i, rainbowOrder(pos));
+        }
+        leds.show();
+    }
 }
 
 void rainbowFull(int delay_ms) {
@@ -176,13 +272,10 @@ void initColorShooterGame() {
     Serial.println("=== COLOR SHOOTER GAME ===");
     Serial.println("Shoot matching colors to destroy enemies!");
     Serial.println("");
-    Serial.println("Controls (Hardware Buttons):");
-    Serial.println("  Pin 2: SHOOT");
-    Serial.println("  Pin 3: CHANGE COLOR");
-    Serial.println("");
-    Serial.println("Controls (Serial):");
-    Serial.println("  'a' or 'A': SHOOT");
-    Serial.println("  'd' or 'D': CHANGE COLOR");
+    Serial.println("Controls:");
+    Serial.println("  [A] - Shoot");
+    Serial.println("  [D] - Change Color");
+    Serial.println("  [0] - Back to Menu");
     Serial.println("==========================");
 }
 
@@ -194,16 +287,19 @@ void colorShooterGame() {
         // Check for restart (press shoot button or 'a' via serial)
         bool restartPressed = false;
         
-        // Check serial for restart
-        if (Serial.available() > 0) {
+        // Check serial for restart (drain buffer)
+        while (Serial.available() > 0) {
             char input = Serial.read();
             if (input == 'a' || input == 'A') {
                 restartPressed = true;
+            } else if (input == '0') {
+                showGameMenu();
+                return;
             }
         }
         
         // Check hardware button for restart
-        if (digitalRead(SHOOT_BUTTON_PIN) == LOW) {
+        if (digitalRead(BUTTON_A_PIN) == LOW) {
             restartPressed = true;
         }
         
@@ -252,9 +348,15 @@ void colorShooterGame() {
 }
 
 void handleGameInput(unsigned long currentTime) {
-    // Check serial input first
-    if (Serial.available() > 0) {
+    // Drain ALL available serial input (prevents buffer backup)
+    while (Serial.available() > 0) {
         char input = Serial.read();
+        
+        // '0' to return to menu
+        if (input == '0') {
+            showGameMenu();
+            return;
+        }
         
         // 'a' or 'A' to shoot
         if ((input == 'a' || input == 'A') && 
@@ -263,30 +365,26 @@ void handleGameInput(unsigned long currentTime) {
             shootBullet();
         }
         
-        // 'd' or 'D' to change color
+        // 'd' or 'D' to change color (fast cycling allowed)
         if ((input == 'd' || input == 'D') && 
-            currentTime - lastColorPress > DEBOUNCE_DELAY) {
+            currentTime - lastColorPress > COLOR_CHANGE_DELAY) {
             lastColorPress = currentTime;
             playerColorIndex = (playerColorIndex + 1) % NUM_COLORS;
-            Serial.print("Color changed to: ");
-            Serial.println(playerColorIndex);
         }
     }
     
     // Hardware button: Shoot (active LOW due to INPUT_PULLUP)
-    if (digitalRead(SHOOT_BUTTON_PIN) == LOW && 
+    if (digitalRead(BUTTON_A_PIN) == LOW && 
         currentTime - lastShootPress > DEBOUNCE_DELAY) {
         lastShootPress = currentTime;
         shootBullet();
     }
     
-    // Hardware button: Color change
-    if (digitalRead(COLOR_BUTTON_PIN) == LOW && 
-        currentTime - lastColorPress > DEBOUNCE_DELAY) {
+    // Hardware button: Color change (fast cycling allowed)
+    if (digitalRead(BUTTON_B_PIN) == LOW && 
+        currentTime - lastColorPress > COLOR_CHANGE_DELAY) {
         lastColorPress = currentTime;
         playerColorIndex = (playerColorIndex + 1) % NUM_COLORS;
-        Serial.print("Color changed to: ");
-        Serial.println(playerColorIndex);
     }
 }
 
@@ -294,9 +392,9 @@ void shootBullet() {
     // Find an inactive bullet slot
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (bulletPositions[i] < 0) {
-            bulletPositions[i] = LED_COUNT - PLAYER_ZONE - 1;
+            bulletPositions[i] = PLAYER_ZONE;  // Start just past player zone
             bulletColors[i] = playerColorIndex;
-            Serial.println("SHOOT!");
+            // Don't print on every shot - causes buffer backup!
             return;
         }
     }
@@ -306,9 +404,10 @@ void shootBullet() {
 void moveBullets() {
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (bulletPositions[i] >= 0) {
-            bulletPositions[i]--;
-            if (bulletPositions[i] < 0) {
+            bulletPositions[i]++;  // Move towards the right (high indices)
+            if (bulletPositions[i] >= LED_COUNT) {
                 // Bullet went off the strip
+                bulletPositions[i] = -1;
             }
         }
     }
@@ -317,10 +416,10 @@ void moveBullets() {
 void moveEnemies() {
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (enemyPositions[i] >= 0) {
-            enemyPositions[i]++;
+            enemyPositions[i]--;  // Move towards the left (player)
             
             // Check if enemy reached player zone - GAME OVER!
-            if (enemyPositions[i] >= LED_COUNT - PLAYER_ZONE) {
+            if (enemyPositions[i] < PLAYER_ZONE) {
                 gameOver = true;
                 Serial.println("GAME OVER!");
                 Serial.print("Final Score: ");
@@ -334,7 +433,7 @@ void spawnEnemy() {
     // Find an inactive enemy slot
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (enemyPositions[i] < 0) {
-            enemyPositions[i] = 0;  // Start at beginning of strip
+            enemyPositions[i] = LED_COUNT - 1;  // Start at end of strip (right side)
             enemyColors[i] = random(NUM_COLORS);  // Random color
             return;
         }
@@ -357,15 +456,12 @@ void checkCollisions() {
                         enemyPositions[e] = -1;
                         bulletPositions[b] = -1;
                         score += 10;
-                        Serial.print("HIT! Score: ");
-                        Serial.println(score);
                         
-                        // Show hit effect
+                        // Show hit effect (non-blocking version)
                         showHitEffect(hitPos);
                     } else {
                         // Wrong color - bullet is destroyed, enemy survives
                         bulletPositions[b] = -1;
-                        Serial.println("Wrong color!");
                     }
                     break;  // This bullet is done, check next bullet
                 }
@@ -404,39 +500,39 @@ void updateDifficulty(unsigned long currentTime) {
 void renderGame() {
     clearLEDs();
     
-    // Draw enemies (falling colors)
+    // Draw enemies (coming from the right)
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (enemyPositions[i] >= 0 && enemyPositions[i] < LED_COUNT - PLAYER_ZONE) {
-            // Draw enemy with a small trail
+        if (enemyPositions[i] >= PLAYER_ZONE && enemyPositions[i] < LED_COUNT) {
+            // Draw enemy with a small trail (trail to the right, behind enemy)
             leds.setPixelColor(enemyPositions[i], GAME_COLORS[enemyColors[i]]);
-            if (enemyPositions[i] > 0) {
-                leds.setPixelColor(enemyPositions[i] - 1, dimColor(GAME_COLORS[enemyColors[i]], 4));
+            if (enemyPositions[i] < LED_COUNT - 1) {
+                leds.setPixelColor(enemyPositions[i] + 1, dimColor(GAME_COLORS[enemyColors[i]], 4));
             }
         }
     }
     
-    // Draw all bullets
+    // Draw all bullets (moving to the right)
     for (int i = 0; i < MAX_BULLETS; i++) {
-        if (bulletPositions[i] >= 0) {
+        if (bulletPositions[i] >= 0 && bulletPositions[i] < LED_COUNT) {
             leds.setPixelColor(bulletPositions[i], GAME_COLORS[bulletColors[i]]);
-            // Bullet trail
-            if (bulletPositions[i] < LED_COUNT - 1) {
-                leds.setPixelColor(bulletPositions[i] + 1, dimColor(GAME_COLORS[bulletColors[i]], 3));
+            // Bullet trail (to the left, behind bullet)
+            if (bulletPositions[i] > 0) {
+                leds.setPixelColor(bulletPositions[i] - 1, dimColor(GAME_COLORS[bulletColors[i]], 3));
             }
-            if (bulletPositions[i] < LED_COUNT - 2) {
-                leds.setPixelColor(bulletPositions[i] + 2, dimColor(GAME_COLORS[bulletColors[i]], 6));
+            if (bulletPositions[i] > 1) {
+                leds.setPixelColor(bulletPositions[i] - 2, dimColor(GAME_COLORS[bulletColors[i]], 6));
             }
         }
     }
     
-    // Draw player zone (last few LEDs show selected color)
+    // Draw player zone (first few LEDs show selected color)
     uint32_t playerColor = GAME_COLORS[playerColorIndex];
     if (colorBlinkState) {
-        for (int i = LED_COUNT - PLAYER_ZONE; i < LED_COUNT; i++) {
+        for (int i = 0; i < PLAYER_ZONE; i++) {
             leds.setPixelColor(i, playerColor);
         }
     } else {
-        for (int i = LED_COUNT - PLAYER_ZONE; i < LED_COUNT; i++) {
+        for (int i = 0; i < PLAYER_ZONE; i++) {
             leds.setPixelColor(i, dimColor(playerColor, 3));
         }
     }
@@ -462,6 +558,379 @@ void showGameOver() {
     }
     
     // Flash red to indicate game over
+    if (blinkState) {
+        for (int i = 0; i < LED_COUNT; i++) {
+            leds.setPixelColor(i, RED);
+        }
+    } else {
+        clearLEDs();
+    }
+    leds.show();
+}
+
+// ============================================
+// TUG OF WAR GAME FUNCTIONS
+// ============================================
+
+void initTugOfWarGame() {
+    ropePosition = 0.0;
+    towGameOver = false;
+    playerWon = false;
+    towGameStartTime = millis();
+    cpuDifficultyMultiplier = 1.0;
+    lastCpuPull = millis();
+    
+    Serial.println("");
+    Serial.println("=== TUG OF WAR ===");
+    Serial.println("Pull the rope to YOUR side (right)!");
+    Serial.println("Mash the button to win!");
+    Serial.println("");
+    Serial.println("Controls:");
+    Serial.println("  [A] - PULL!");
+    Serial.println("  [0] - Back to Menu");
+    Serial.println("==================");
+}
+
+void tugOfWarGame() {
+    unsigned long currentTime = millis();
+    
+    if (towGameOver) {
+        showTugOfWarResult();
+        
+        // Check for restart or menu (drain buffer)
+        while (Serial.available() > 0) {
+            char input = Serial.read();
+            if (input == 'a' || input == 'A') {
+                initTugOfWarGame();
+                return;
+            } else if (input == '0') {
+                showGameMenu();
+                return;
+            }
+        }
+        if (digitalRead(BUTTON_A_PIN) == LOW && 
+            currentTime - towGameOverTime > 1000) {
+            initTugOfWarGame();
+        }
+        return;
+    }
+    
+    // Handle player input
+    handleTugOfWarInput(currentTime);
+    
+    // CPU pulls continuously
+    if (currentTime - lastCpuPull >= cpuPullInterval) {
+        lastCpuPull = currentTime;
+        
+        // Increase difficulty over time
+        unsigned long elapsed = currentTime - towGameStartTime;
+        cpuDifficultyMultiplier = 1.0 + (elapsed / 5000.0) * 0.2;  // +20% every 5 seconds
+        
+        // CPU pull with some randomness
+        float pull = cpuPullStrength * cpuDifficultyMultiplier;
+        pull += random(-100, 100) / 1000.0 * cpuPullVariance;
+        ropePosition += pull;  // Positive = towards CPU side (left)
+    }
+    
+    // Check win conditions
+    if (ropePosition <= -ROPE_MAX) {
+        // Player wins!
+        towGameOver = true;
+        playerWon = true;
+        towGameOverTime = currentTime;
+        Serial.println("");
+        Serial.println("*** YOU WIN! ***");
+        Serial.println("Press [A] to play again or [0] for menu");
+    } else if (ropePosition >= ROPE_MAX) {
+        // CPU wins
+        towGameOver = true;
+        playerWon = false;
+        towGameOverTime = currentTime;
+        Serial.println("");
+        Serial.println("*** CPU WINS! ***");
+        Serial.println("Press [A] to play again or [0] for menu");
+    }
+    
+    // Render the game
+    renderTugOfWar();
+}
+
+void handleTugOfWarInput(unsigned long currentTime) {
+    // Drain ALL available serial input (prevents buffer backup when mashing)
+    while (Serial.available() > 0) {
+        char input = Serial.read();
+        
+        // '0' to return to menu
+        if (input == '0') {
+            showGameMenu();
+            return;
+        }
+        
+        // 'a' or 'A' to pull - each keypress counts!
+        if (input == 'a' || input == 'A') {
+            ropePosition -= playerPullStrength;  // Negative = towards player side
+        }
+    }
+    
+    // Hardware button: Pull
+    static unsigned long lastButtonPull = 0;
+    if (digitalRead(BUTTON_A_PIN) == LOW && 
+        currentTime - lastButtonPull > 50) {  // Fast repeat for mashing
+        lastButtonPull = currentTime;
+        ropePosition -= playerPullStrength;
+    }
+}
+
+void renderTugOfWar() {
+    clearLEDs();
+    
+    // Calculate center position based on rope position
+    // ropePosition: -ROPE_MAX (player wins) to +ROPE_MAX (CPU wins)
+    // Map to LED strip: 0 (CPU side) to LED_COUNT-1 (Player side)
+    int center = LED_COUNT / 2;
+    int ropeCenter = center - (int)(ropePosition * (LED_COUNT / 2) / ROPE_MAX);
+    ropeCenter = constrain(ropeCenter, 2, LED_COUNT - 3);
+    
+    // Draw CPU side (left/start) - Red gradient
+    for (int i = 0; i < center; i++) {
+        int brightness = map(i, 0, center, 50, 150);
+        leds.setPixelColor(i, leds.Color(brightness, 0, 0));
+    }
+    
+    // Draw Player side (right/end) - Green gradient
+    for (int i = center; i < LED_COUNT; i++) {
+        int brightness = map(i, center, LED_COUNT, 150, 50);
+        leds.setPixelColor(i, leds.Color(0, brightness, 0));
+    }
+    
+    // Draw the rope marker (white with glow)
+    leds.setPixelColor(ropeCenter, WHITE);
+    if (ropeCenter > 0) {
+        leds.setPixelColor(ropeCenter - 1, leds.Color(100, 100, 100));
+    }
+    if (ropeCenter < LED_COUNT - 1) {
+        leds.setPixelColor(ropeCenter + 1, leds.Color(100, 100, 100));
+    }
+    if (ropeCenter > 1) {
+        leds.setPixelColor(ropeCenter - 2, leds.Color(50, 50, 50));
+    }
+    if (ropeCenter < LED_COUNT - 2) {
+        leds.setPixelColor(ropeCenter + 2, leds.Color(50, 50, 50));
+    }
+    
+    leds.show();
+}
+
+void showTugOfWarResult() {
+    static unsigned long lastBlink = 0;
+    static bool blinkState = true;
+    
+    unsigned long currentTime = millis();
+    if (currentTime - lastBlink >= 200) {
+        lastBlink = currentTime;
+        blinkState = !blinkState;
+    }
+    
+    if (playerWon) {
+        // Flash green for player win
+        uint32_t color = blinkState ? GREEN : leds.Color(0, 50, 0);
+        for (int i = 0; i < LED_COUNT; i++) {
+            leds.setPixelColor(i, color);
+        }
+    } else {
+        // Flash red for CPU win
+        uint32_t color = blinkState ? RED : leds.Color(50, 0, 0);
+        for (int i = 0; i < LED_COUNT; i++) {
+            leds.setPixelColor(i, color);
+        }
+    }
+    leds.show();
+}
+
+// ============================================
+// REACTION ZONE GAME FUNCTIONS
+// ============================================
+
+void initReactionZoneGame() {
+    rzLightPosition = LED_COUNT - 1;  // Start at top
+    rzLightDirection = -1;            // Moving down initially
+    rzZoneSize = 20;                  // Start with a big zone
+    rzZoneStart = random(0, LED_COUNT - rzZoneSize);  // Random position
+    rzSpeed = 35;                     // Starting speed (ms per move)
+    rzLevel = 1;
+    rzScore = 0;
+    rzGameOver = false;
+    rzWaitingForRelease = false;
+    rzLastMove = millis();
+    
+    Serial.println("");
+    Serial.println("=== REACTION ZONE ===");
+    Serial.println("Press [A] when the light is in the GREEN zone!");
+    Serial.println("");
+    Serial.println("Controls:");
+    Serial.println("  [A] - STOP!");
+    Serial.println("  [0] - Back to Menu");
+    Serial.println("=====================");
+}
+
+void reactionZoneGame() {
+    unsigned long currentTime = millis();
+    
+    if (rzGameOver) {
+        showReactionZoneResult();
+        
+        // Check for restart or menu (drain buffer)
+        while (Serial.available() > 0) {
+            char input = Serial.read();
+            if (input == 'a' || input == 'A') {
+                initReactionZoneGame();
+                return;
+            } else if (input == '0') {
+                showGameMenu();
+                return;
+            }
+        }
+        
+        // Hardware button restart
+        if (digitalRead(BUTTON_A_PIN) == LOW && 
+            currentTime - rzGameOverTime > 1000) {
+            initReactionZoneGame();
+        }
+        return;
+    }
+    
+    // Handle input
+    handleReactionZoneInput(currentTime);
+    
+    // Move the light
+    if (currentTime - rzLastMove >= rzSpeed) {
+        rzLastMove = currentTime;
+        
+        rzLightPosition += rzLightDirection;
+        
+        // Bounce at ends
+        if (rzLightPosition >= LED_COUNT - 1) {
+            rzLightPosition = LED_COUNT - 1;
+            rzLightDirection = -1;
+        } else if (rzLightPosition <= 0) {
+            rzLightPosition = 0;
+            rzLightDirection = 1;
+        }
+    }
+    
+    // Render the game
+    renderReactionZone();
+}
+
+void handleReactionZoneInput(unsigned long currentTime) {
+    bool buttonPressed = false;
+    
+    // Check serial input (drain buffer)
+    while (Serial.available() > 0) {
+        char input = Serial.read();
+        
+        if (input == '0') {
+            showGameMenu();
+            return;
+        }
+        
+        if (input == 'a' || input == 'A') {
+            buttonPressed = true;
+        }
+    }
+    
+    // Check hardware button
+    if (digitalRead(BUTTON_A_PIN) == LOW) {
+        buttonPressed = true;
+    } else {
+        rzWaitingForRelease = false;  // Button released
+    }
+    
+    // Process button press (only once per press)
+    if (buttonPressed && !rzWaitingForRelease) {
+        rzWaitingForRelease = true;
+        
+        // Check if light is in the zone
+        if (rzLightPosition >= rzZoneStart && rzLightPosition < rzZoneStart + rzZoneSize) {
+            // SUCCESS! Level up!
+            rzScore += rzLevel * 10;
+            rzLevel++;
+            
+            // Make it harder
+            rzZoneSize = max(3, 20 - rzLevel);    // Zone gets smaller (min 3 LEDs)
+            rzSpeed = max(12, 35 - rzLevel * 2);  // Light gets faster (min 12ms)
+            
+            // Move zone to a new random position
+            rzZoneStart = random(0, LED_COUNT - rzZoneSize);
+            
+            // Flash success
+            showReactionSuccess();
+        } else {
+            // MISS! Game over
+            rzGameOver = true;
+            rzGameOverTime = currentTime;
+            Serial.println("");
+            Serial.print("GAME OVER! Level: ");
+            Serial.print(rzLevel);
+            Serial.print(" Score: ");
+            Serial.println(rzScore);
+            Serial.println("Press [A] to play again or [0] for menu");
+        }
+    }
+}
+
+void renderReactionZone() {
+    clearLEDs();
+    
+    // Draw the goal zone (green)
+    for (int i = rzZoneStart; i < rzZoneStart + rzZoneSize; i++) {
+        if (i < LED_COUNT) {
+            leds.setPixelColor(i, leds.Color(0, 100, 0));  // Dark green background
+        }
+    }
+    
+    // Draw fading trail behind the light
+    for (int t = 1; t <= 5; t++) {
+        int trailPos = rzLightPosition - (rzLightDirection * t);
+        if (trailPos >= 0 && trailPos < LED_COUNT) {
+            int brightness = 255 / (t + 1);
+            leds.setPixelColor(trailPos, leds.Color(brightness, brightness / 2, 0));
+        }
+    }
+    
+    // Draw the bouncing light (bright white/yellow)
+    if (rzLightPosition >= 0 && rzLightPosition < LED_COUNT) {
+        leds.setPixelColor(rzLightPosition, leds.Color(255, 200, 50));
+    }
+    
+    leds.show();
+}
+
+void showReactionSuccess() {
+    // Quick green flash to show success
+    for (int flash = 0; flash < 3; flash++) {
+        for (int i = 0; i < LED_COUNT; i++) {
+            leds.setPixelColor(i, GREEN);
+        }
+        leds.show();
+        delay(50);
+        clearLEDs();
+        leds.show();
+        delay(50);
+    }
+}
+
+void showReactionZoneResult() {
+    static unsigned long lastBlink = 0;
+    static bool blinkState = true;
+    
+    unsigned long currentTime = millis();
+    if (currentTime - lastBlink >= 300) {
+        lastBlink = currentTime;
+        blinkState = !blinkState;
+    }
+    
+    // Flash red for game over
     if (blinkState) {
         for (int i = 0; i < LED_COUNT; i++) {
             leds.setPixelColor(i, RED);
