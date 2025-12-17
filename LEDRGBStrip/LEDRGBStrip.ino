@@ -1,12 +1,16 @@
 #include <Adafruit_NeoPixel.h>
 #include "WS2812_Definitions.h"
 
-#define PIN 4
+#define PIN 16            // ESP32: Use GPIO16 for NeoPixel data
 #define LED_COUNT 60
 
-// Button pins for games
-#define BUTTON_A_PIN 2    // Primary action button (shoot / pull)
-#define BUTTON_B_PIN 3    // Secondary action button (change color)
+// Color buttons (ESP32-compatible GPIOs)
+// All game controls use these 5 buttons
+#define BTN_WHITE_PIN  18
+#define BTN_RED_PIN    19
+#define BTN_BLUE_PIN   21
+#define BTN_YELLOW_PIN 22
+#define BTN_GREEN_PIN  23
 
 // Library for WS2812 by Adafruit
 Adafruit_NeoPixel leds = Adafruit_NeoPixel(LED_COUNT, PIN, NEO_GRB + NEO_KHZ800);
@@ -25,9 +29,12 @@ int currentGame = GAME_MENU;
 // COLOR SHOOTER GAME VARIABLES
 // ============================================
 
-// Game colors (distinct, easy to recognize)
-const uint32_t GAME_COLORS[] = {RED, GREEN, BLUE, YELLOW, MAGENTA, CYAN};
-const byte NUM_COLORS = 6;
+// Game colors matching the button order: WHITE, RED, BLUE, YELLOW, GREEN
+const uint32_t GAME_COLORS[] = {WHITE, RED, BLUE, YELLOW, GREEN};
+const byte NUM_COLORS = 5;
+
+// Color button pins array (matches GAME_COLORS order)
+const int COLOR_BUTTON_PINS[] = {BTN_WHITE_PIN, BTN_RED_PIN, BTN_BLUE_PIN, BTN_YELLOW_PIN, BTN_GREEN_PIN};
 
 // Falling enemies
 #define MAX_ENEMIES 10
@@ -63,6 +70,7 @@ unsigned long lastShootPress = 0;
 unsigned long lastColorPress = 0;
 const unsigned long DEBOUNCE_DELAY = 150;
 const unsigned long COLOR_CHANGE_DELAY = 50;  // Faster color cycling
+bool shootButtonReleased = true;              // Require release between shots
 
 // ============================================
 // TUG OF WAR GAME VARIABLES
@@ -102,9 +110,10 @@ void setup() {
     Serial.begin(9600);
     randomSeed(analogRead(0));
     
-    // Setup button pins
-    pinMode(BUTTON_A_PIN, INPUT_PULLUP);
-    pinMode(BUTTON_B_PIN, INPUT_PULLUP);
+    // Setup color buttons
+    for (int i = 0; i < NUM_COLORS; i++) {
+        pinMode(COLOR_BUTTON_PINS[i], INPUT_PULLUP);
+    }
     
     leds.begin();
     leds.setBrightness(100);
@@ -137,6 +146,46 @@ void loop() {
 }
 
 // ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+// Check if any color button is pressed
+bool anyColorButtonPressed() {
+    for (int i = 0; i < NUM_COLORS; i++) {
+        if (digitalRead(COLOR_BUTTON_PINS[i]) == LOW) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Count how many color buttons are pressed
+int countPressedButtons() {
+    int count = 0;
+    for (int i = 0; i < NUM_COLORS; i++) {
+        if (digitalRead(COLOR_BUTTON_PINS[i]) == LOW) {
+            count++;
+        }
+    }
+    return count;
+}
+
+// Check if multiple buttons pressed (return to menu)
+bool multipleButtonsPressed() {
+    return countPressedButtons() >= 4;
+}
+
+// Check if all color buttons are released
+bool allColorButtonsReleased() {
+    for (int i = 0; i < NUM_COLORS; i++) {
+        if (digitalRead(COLOR_BUTTON_PINS[i]) == LOW) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ============================================
 // GAME MENU FUNCTIONS
 // ============================================
 
@@ -146,17 +195,16 @@ void showGameMenu() {
     Serial.println("       LED STRIP GAME SELECTOR");
     Serial.println("========================================");
     Serial.println("");
-    Serial.println("Press a number to select a game:");
+    Serial.println("Press a color button to select a game:");
     Serial.println("");
-    Serial.println("  [1] Color Shooter");
-    Serial.println("      Shoot matching colors to destroy");
-    Serial.println("      falling enemies!");
+    Serial.println("  [WHITE] Color Shooter");
+    Serial.println("          Shoot matching colors!");
     Serial.println("");
-    Serial.println("  [2] Tug of War");
-    Serial.println("      Mash the button to beat the CPU!");
+    Serial.println("  [RED]   Tug of War");
+    Serial.println("          Mash to beat the CPU!");
     Serial.println("");
-    Serial.println("  [3] Reaction Zone");
-    Serial.println("      Stop the light in the zone!");
+    Serial.println("  [BLUE]  Reaction Zone");
+    Serial.println("          Stop the light in the zone!");
     Serial.println("");
     Serial.println("========================================");
     currentGame = GAME_MENU;
@@ -166,41 +214,85 @@ void checkGameSelection() {
     // Only check for game selection when in menu
     if (currentGame != GAME_MENU) return;
     
-    // Drain buffer to prevent backup
+    // Check serial input
     while (Serial.available() > 0) {
         char input = Serial.read();
         
-        if (input == '1') {
+        // W or 1 = Color Shooter
+        if (input == 'w' || input == 'W' || input == '1') {
             currentGame = GAME_COLOR_SHOOTER;
             initColorShooterGame();
             return;
-        } else if (input == '2') {
+        }
+        // R or 2 = Tug of War
+        if (input == 'r' || input == 'R' || input == '2') {
             currentGame = GAME_TUG_OF_WAR;
             initTugOfWarGame();
             return;
-        } else if (input == '3') {
+        }
+        // B or 3 = Reaction Zone
+        if (input == 'b' || input == 'B' || input == '3') {
             currentGame = GAME_REACTION_ZONE;
             initReactionZoneGame();
             return;
         }
     }
+    
+    // Check hardware color buttons
+    if (digitalRead(BTN_WHITE_PIN) == LOW) {
+        currentGame = GAME_COLOR_SHOOTER;
+        initColorShooterGame();
+        delay(200);  // Debounce
+        return;
+    }
+    if (digitalRead(BTN_RED_PIN) == LOW) {
+        currentGame = GAME_TUG_OF_WAR;
+        initTugOfWarGame();
+        delay(200);  // Debounce
+        return;
+    }
+    if (digitalRead(BTN_BLUE_PIN) == LOW) {
+        currentGame = GAME_REACTION_ZONE;
+        initReactionZoneGame();
+        delay(200);  // Debounce
+        return;
+    }
 }
 
 void runGameMenu() {
-    // Animate rainbow while waiting for selection
+    // Show game selection colors on LED strip
     static unsigned long lastUpdate = 0;
-    static int offset = 0;
+    static bool blinkState = true;
     
-    if (millis() - lastUpdate > 50) {
+    if (millis() - lastUpdate > 500) {
         lastUpdate = millis();
-        offset = (offset + 1) % 192;
-        
-        for (int i = 0; i < LED_COUNT; i++) {
-            int pos = (i * 192 / LED_COUNT + offset) % 192;
-            leds.setPixelColor(i, rainbowOrder(pos));
-        }
-        leds.show();
+        blinkState = !blinkState;
     }
+    
+    clearLEDs();
+    
+    // Divide strip into 3 sections for the 3 games
+    int sectionSize = LED_COUNT / 3;
+    
+    // Section 1: WHITE = Color Shooter
+    uint32_t whiteColor = blinkState ? WHITE : leds.Color(50, 50, 50);
+    for (int i = 0; i < sectionSize; i++) {
+        leds.setPixelColor(i, whiteColor);
+    }
+    
+    // Section 2: RED = Tug of War
+    uint32_t redColor = blinkState ? RED : leds.Color(50, 0, 0);
+    for (int i = sectionSize; i < sectionSize * 2; i++) {
+        leds.setPixelColor(i, redColor);
+    }
+    
+    // Section 3: BLUE = Reaction Zone
+    uint32_t blueColor = blinkState ? BLUE : leds.Color(0, 0, 50);
+    for (int i = sectionSize * 2; i < LED_COUNT; i++) {
+        leds.setPixelColor(i, blueColor);
+    }
+    
+    leds.show();
 }
 
 void rainbowFull(int delay_ms) {
@@ -260,6 +352,7 @@ void initColorShooterGame() {
     
     // Reset player
     playerColorIndex = 0;
+    shootButtonReleased = true;
     
     // Reset game state
     score = 0;
@@ -272,15 +365,22 @@ void initColorShooterGame() {
     Serial.println("=== COLOR SHOOTER GAME ===");
     Serial.println("Shoot matching colors to destroy enemies!");
     Serial.println("");
-    Serial.println("Controls:");
-    Serial.println("  [A] - Shoot");
-    Serial.println("  [D] - Change Color");
-    Serial.println("  [0] - Back to Menu");
+    Serial.println("Controls (press to shoot that color):");
+    Serial.println("  [W] White | [R] Red | [B] Blue");
+    Serial.println("  [Y] Yellow | [G] Green");
+    Serial.println("  [4+ buttons] - Back to Menu");
     Serial.println("==========================");
 }
 
 void colorShooterGame() {
     unsigned long currentTime = millis();
+    
+    // Check for multi-button press to return to menu
+    if (multipleButtonsPressed()) {
+        delay(200);  // Debounce
+        showGameMenu();
+        return;
+    }
     
     if (gameOver) {
         showGameOver();
@@ -298,8 +398,8 @@ void colorShooterGame() {
             }
         }
         
-        // Check hardware button for restart
-        if (digitalRead(BUTTON_A_PIN) == LOW) {
+        // Check hardware button for restart (any color button)
+        if (anyColorButtonPressed()) {
             restartPressed = true;
         }
         
@@ -358,33 +458,46 @@ void handleGameInput(unsigned long currentTime) {
             return;
         }
         
-        // 'a' or 'A' to shoot
-        if ((input == 'a' || input == 'A') && 
-            currentTime - lastShootPress > DEBOUNCE_DELAY) {
+        // Serial color selection: w/r/b/y/g - select color AND shoot
+        bool colorSelected = false;
+        if (input == 'w' || input == 'W') { playerColorIndex = 0; colorSelected = true; }
+        if (input == 'r' || input == 'R') { playerColorIndex = 1; colorSelected = true; }
+        if (input == 'b' || input == 'B') { playerColorIndex = 2; colorSelected = true; }
+        if (input == 'y' || input == 'Y') { playerColorIndex = 3; colorSelected = true; }
+        if (input == 'g' || input == 'G') { playerColorIndex = 4; colorSelected = true; }
+        
+        if (colorSelected && currentTime - lastShootPress > DEBOUNCE_DELAY) {
             lastShootPress = currentTime;
             shootBullet();
         }
         
-        // 'd' or 'D' to change color (fast cycling allowed)
+        // 'd' or 'D' to cycle colors and shoot
         if ((input == 'd' || input == 'D') && 
             currentTime - lastColorPress > COLOR_CHANGE_DELAY) {
             lastColorPress = currentTime;
             playerColorIndex = (playerColorIndex + 1) % NUM_COLORS;
+            shootBullet();
         }
     }
     
-    // Hardware button: Shoot (active LOW due to INPUT_PULLUP)
-    if (digitalRead(BUTTON_A_PIN) == LOW && 
-        currentTime - lastShootPress > DEBOUNCE_DELAY) {
-        lastShootPress = currentTime;
-        shootBullet();
+    // Hardware color buttons: select color AND shoot (requires release between shots)
+    bool anyButtonDown = false;
+    for (int i = 0; i < NUM_COLORS; i++) {
+        if (digitalRead(COLOR_BUTTON_PINS[i]) == LOW) {
+            anyButtonDown = true;
+            if (shootButtonReleased && currentTime - lastShootPress > DEBOUNCE_DELAY) {
+                playerColorIndex = i;
+                lastShootPress = currentTime;
+                shootButtonReleased = false;  // Must release before next shot
+                shootBullet();
+            }
+            break;
+        }
     }
     
-    // Hardware button: Color change (fast cycling allowed)
-    if (digitalRead(BUTTON_B_PIN) == LOW && 
-        currentTime - lastColorPress > COLOR_CHANGE_DELAY) {
-        lastColorPress = currentTime;
-        playerColorIndex = (playerColorIndex + 1) % NUM_COLORS;
+    // Track button release
+    if (!anyButtonDown) {
+        shootButtonReleased = true;
     }
 }
 
@@ -491,10 +604,10 @@ void updateDifficulty(unsigned long currentTime) {
     unsigned long elapsed = currentTime - gameStartTime;
     
     // Speed up enemies (minimum 80ms)
-    enemySpeed = max(80, 200 - (elapsed / 10000) * 20);
+    enemySpeed = max((long unsigned) 80, 200 - (elapsed / 10000) * 20);
     
     // Spawn faster (minimum 800ms)
-    spawnInterval = max(800, 2000 - (elapsed / 15000) * 200);
+    spawnInterval = max((long unsigned) 800, 2000 - (elapsed / 15000) * 200);
 }
 
 void renderGame() {
@@ -583,16 +696,23 @@ void initTugOfWarGame() {
     Serial.println("");
     Serial.println("=== TUG OF WAR ===");
     Serial.println("Pull the rope to YOUR side (right)!");
-    Serial.println("Mash the button to win!");
+    Serial.println("Mash ANY button to win!");
     Serial.println("");
     Serial.println("Controls:");
-    Serial.println("  [A] - PULL!");
-    Serial.println("  [0] - Back to Menu");
+    Serial.println("  [Any Button] - PULL!");
+    Serial.println("  [4+ buttons] - Back to Menu");
     Serial.println("==================");
 }
 
 void tugOfWarGame() {
     unsigned long currentTime = millis();
+    
+    // Check for multi-button press to return to menu
+    if (multipleButtonsPressed()) {
+        delay(200);  // Debounce
+        showGameMenu();
+        return;
+    }
     
     if (towGameOver) {
         showTugOfWarResult();
@@ -600,15 +720,21 @@ void tugOfWarGame() {
         // Check for restart or menu (drain buffer)
         while (Serial.available() > 0) {
             char input = Serial.read();
-            if (input == 'a' || input == 'A') {
-                initTugOfWarGame();
-                return;
-            } else if (input == '0') {
+            if (input == '0') {
                 showGameMenu();
                 return;
             }
+            // Any color key restarts
+            if (input == 'w' || input == 'W' ||
+                input == 'r' || input == 'R' ||
+                input == 'b' || input == 'B' ||
+                input == 'y' || input == 'Y' ||
+                input == 'g' || input == 'G') {
+                initTugOfWarGame();
+                return;
+            }
         }
-        if (digitalRead(BUTTON_A_PIN) == LOW && 
+        if (anyColorButtonPressed() && 
             currentTime - towGameOverTime > 1000) {
             initTugOfWarGame();
         }
@@ -666,15 +792,19 @@ void handleTugOfWarInput(unsigned long currentTime) {
             return;
         }
         
-        // 'a' or 'A' to pull - each keypress counts!
-        if (input == 'a' || input == 'A') {
+        // Any color key (w/r/b/y/g) to pull - each keypress counts!
+        if (input == 'w' || input == 'W' ||
+            input == 'r' || input == 'R' ||
+            input == 'b' || input == 'B' ||
+            input == 'y' || input == 'Y' ||
+            input == 'g' || input == 'G') {
             ropePosition -= playerPullStrength;  // Negative = towards player side
         }
     }
     
-    // Hardware button: Pull
+    // Hardware buttons: Pull (any color button)
     static unsigned long lastButtonPull = 0;
-    if (digitalRead(BUTTON_A_PIN) == LOW && 
+    if (anyColorButtonPressed() && 
         currentTime - lastButtonPull > 50) {  // Fast repeat for mashing
         lastButtonPull = currentTime;
         ropePosition -= playerPullStrength;
@@ -765,16 +895,23 @@ void initReactionZoneGame() {
     
     Serial.println("");
     Serial.println("=== REACTION ZONE ===");
-    Serial.println("Press [A] when the light is in the GREEN zone!");
+    Serial.println("Press ANY button when the light is in the GREEN zone!");
     Serial.println("");
     Serial.println("Controls:");
-    Serial.println("  [A] - STOP!");
-    Serial.println("  [0] - Back to Menu");
+    Serial.println("  [Any Button] - STOP!");
+    Serial.println("  [4+ buttons] - Back to Menu");
     Serial.println("=====================");
 }
 
 void reactionZoneGame() {
     unsigned long currentTime = millis();
+    
+    // Check for multi-button press to return to menu
+    if (multipleButtonsPressed()) {
+        delay(200);  // Debounce
+        showGameMenu();
+        return;
+    }
     
     if (rzGameOver) {
         showReactionZoneResult();
@@ -782,17 +919,23 @@ void reactionZoneGame() {
         // Check for restart or menu (drain buffer)
         while (Serial.available() > 0) {
             char input = Serial.read();
-            if (input == 'a' || input == 'A') {
-                initReactionZoneGame();
-                return;
-            } else if (input == '0') {
+            if (input == '0') {
                 showGameMenu();
+                return;
+            }
+            // Any color key restarts
+            if (input == 'w' || input == 'W' ||
+                input == 'r' || input == 'R' ||
+                input == 'b' || input == 'B' ||
+                input == 'y' || input == 'Y' ||
+                input == 'g' || input == 'G') {
+                initReactionZoneGame();
                 return;
             }
         }
         
-        // Hardware button restart
-        if (digitalRead(BUTTON_A_PIN) == LOW && 
+        // Hardware button restart (any color button)
+        if (anyColorButtonPressed() && 
             currentTime - rzGameOverTime > 1000) {
             initReactionZoneGame();
         }
@@ -834,16 +977,21 @@ void handleReactionZoneInput(unsigned long currentTime) {
             return;
         }
         
-        if (input == 'a' || input == 'A') {
+        // Any color key triggers action
+        if (input == 'w' || input == 'W' ||
+            input == 'r' || input == 'R' ||
+            input == 'b' || input == 'B' ||
+            input == 'y' || input == 'Y' ||
+            input == 'g' || input == 'G') {
             buttonPressed = true;
         }
     }
     
-    // Check hardware button
-    if (digitalRead(BUTTON_A_PIN) == LOW) {
+    // Check hardware buttons (any color button)
+    if (anyColorButtonPressed()) {
         buttonPressed = true;
     } else {
-        rzWaitingForRelease = false;  // Button released
+        rzWaitingForRelease = false;  // All buttons released
     }
     
     // Process button press (only once per press)

@@ -103,20 +103,20 @@ print_help() {
     echo "     LED STRIP GAMES - Serial Controller"
     echo "========================================="
     echo ""
-    echo "Game Selection:"
-    echo "  [1] - Color Shooter"
-    echo "  [2] - Tug of War"
-    echo "  [3] - Reaction Zone"
-    echo "  [0] - Back to Menu"
+    echo "Game Selection (from menu):"
+    echo "  [W] - Color Shooter"
+    echo "  [R] - Tug of War"
+    echo "  [B] - Reaction Zone"
+    echo "  [0] - Back to Menu (during game)"
     echo ""
-    echo "Game Controls:"
-    echo "  [A] - Primary Action (Shoot / Pull / Stop)"
-    echo "  [D] - Secondary Action (Change Color)"
+    echo "In-Game Controls:"
+    echo "  [W] [R] [B] [Y] [G] - Color buttons"
+    echo "  [D] - Cycle colors (Color Shooter)"
     echo ""
     echo "System:"
-    echo "  [R] - Reconnect Serial"
-    echo "  [H] - Show this help"
-    echo "  [Q] - Quit"
+    echo "  [Shift+R] - Reconnect Serial"
+    echo "  [Shift+H] - Show this help"
+    echo "  [Shift+Q] - Quit"
     echo ""
     echo "========================================="
 }
@@ -147,32 +147,30 @@ while true; do
     # -t 0.02: small timeout to keep loop responsive
     if IFS= read -rsn1 -t 0.02 char && [ -n "$char" ]; then
         case "$char" in
-            # Game selection
-            0|1|2|3)
+            # Back to menu
+            0)
+                send_char "0"
+                ;;
+            # Color buttons - game selection AND in-game controls
+            w|r|b|y|g)
                 send_char "$char"
                 ;;
-            # Primary action (shoot / pull)
-            a|A)
-                send_char "a"
-                ;;
-            # Secondary action (change color)
-            d|D)
+            # Cycle colors (Color Shooter)
+            d)
                 send_char "d"
                 ;;
-            # Reconnect serial
-            r|R)
+            # System commands (Shift + key = uppercase)
+            R)
                 stty "$old_stty"
                 open_serial
                 stty raw -echo min 0 time 1
                 ;;
-            # Show help
-            h|H)
+            H)
                 stty "$old_stty"
                 print_help
                 stty raw -echo min 0 time 1
                 ;;
-            # Quit
-            q|Q)
+            Q)
                 cleanup
                 ;;
         esac
