@@ -22,6 +22,7 @@ Adafruit_NeoPixel leds = Adafruit_NeoPixel(LED_COUNT, PIN, NEO_GRB + NEO_KHZ800)
 #define GAME_COLOR_SHOOTER 1
 #define GAME_TUG_OF_WAR 2
 #define GAME_REACTION_ZONE 3
+#define GAME_PACMAN 4
 
 int currentGame = GAME_MENU;
 
@@ -70,7 +71,6 @@ unsigned long lastShootPress = 0;
 unsigned long lastColorPress = 0;
 const unsigned long DEBOUNCE_DELAY = 150;
 const unsigned long COLOR_CHANGE_DELAY = 50;  // Faster color cycling
-bool shootButtonReleased = true;              // Require release between shots
 
 // ============================================
 // TUG OF WAR GAME VARIABLES
@@ -105,6 +105,38 @@ bool rzGameOver = false;
 bool rzWaitingForRelease = false;     // Prevent holding the button
 unsigned long rzLastMove = 0;
 unsigned long rzGameOverTime = 0;
+
+// ============================================
+// PACMAN GAME VARIABLES
+// ============================================
+int pacmanPos = 0;                    // Pacman position
+int pacmanDir = 1;                    // Pacman direction (1 = right, -1 = left)
+bool pacmanPoweredUp = false;         // Power pellet active
+unsigned long powerUpEndTime = 0;     // When power-up expires
+const unsigned long POWER_UP_DURATION = 5000;  // 5 seconds of power
+
+#define MAX_GHOSTS 3
+int ghostPos[MAX_GHOSTS];             // Ghost positions
+int ghostDir[MAX_GHOSTS];             // Ghost directions
+uint32_t ghostColors[MAX_GHOSTS];     // Ghost colors
+bool ghostScared[MAX_GHOSTS];         // Ghost is scared (can be eaten)
+bool ghostActive[MAX_GHOSTS];         // Ghost is active
+
+bool dots[LED_COUNT];                 // Dots to collect
+bool powerPellets[LED_COUNT];         // Power pellets
+int dotsRemaining = 0;                // Dots left to eat
+int pacmanLives = 3;                  // Lives remaining
+int pacmanScore = 0;                  // Score
+int pacmanLevel = 1;                  // Current level
+bool pacmanGameOver = false;
+bool pacmanWon = false;
+
+unsigned long lastPacmanMove = 0;
+unsigned long lastGhostMove = 0;
+int pacmanSpeed = 80;                 // ms per move
+int ghostSpeed = 150;                 // ms per ghost move
+unsigned long pacmanGameOverTime = 0;
+bool pacmanButtonReleased = true;
 
 void setup() {
     Serial.begin(9600);
@@ -141,6 +173,9 @@ void loop() {
             break;
         case GAME_REACTION_ZONE:
             reactionZoneGame();
+            break;
+        case GAME_PACMAN:
+            pacmanGame();
             break;
     }
 }
@@ -197,14 +232,10 @@ void showGameMenu() {
     Serial.println("");
     Serial.println("Press a color button to select a game:");
     Serial.println("");
-    Serial.println("  [WHITE] Color Shooter");
-    Serial.println("          Shoot matching colors!");
-    Serial.println("");
-    Serial.println("  [RED]   Tug of War");
-    Serial.println("          Mash to beat the CPU!");
-    Serial.println("");
-    Serial.println("  [BLUE]  Reaction Zone");
-    Serial.println("          Stop the light in the zone!");
+    Serial.println("  [WHITE]  Color Shooter");
+    Serial.println("  [RED]    Tug of War");
+    Serial.println("  [BLUE]   Reaction Zone");
+    Serial.println("  [YELLOW] Pacman 1D");
     Serial.println("");
     Serial.println("========================================");
     currentGame = GAME_MENU;
@@ -236,6 +267,12 @@ void checkGameSelection() {
             initReactionZoneGame();
             return;
         }
+        // Y or 4 = Pacman
+        if (input == 'y' || input == 'Y' || input == '4') {
+            currentGame = GAME_PACMAN;
+            initPacmanGame();
+            return;
+        }
     }
     
     // Check hardware color buttons
@@ -257,6 +294,12 @@ void checkGameSelection() {
         delay(200);  // Debounce
         return;
     }
+    if (digitalRead(BTN_YELLOW_PIN) == LOW) {
+        currentGame = GAME_PACMAN;
+        initPacmanGame();
+        delay(200);  // Debounce
+        return;
+    }
 }
 
 void runGameMenu() {
@@ -271,25 +314,31 @@ void runGameMenu() {
     
     clearLEDs();
     
-    // Divide strip into 3 sections for the 3 games
-    int sectionSize = LED_COUNT / 3;
+    // Divide strip into 4 sections for the 4 games (reversed order)
+    int sectionSize = LED_COUNT / 4;
     
-    // Section 1: WHITE = Color Shooter
-    uint32_t whiteColor = blinkState ? WHITE : leds.Color(50, 50, 50);
+    // Section 1: YELLOW = Pacman
+    uint32_t yellowColor = blinkState ? YELLOW : leds.Color(50, 50, 0);
     for (int i = 0; i < sectionSize; i++) {
-        leds.setPixelColor(i, whiteColor);
+        leds.setPixelColor(i, yellowColor);
     }
     
-    // Section 2: RED = Tug of War
-    uint32_t redColor = blinkState ? RED : leds.Color(50, 0, 0);
+    // Section 2: BLUE = Reaction Zone
+    uint32_t blueColor = blinkState ? BLUE : leds.Color(0, 0, 50);
     for (int i = sectionSize; i < sectionSize * 2; i++) {
+        leds.setPixelColor(i, blueColor);
+    }
+    
+    // Section 3: RED = Tug of War
+    uint32_t redColor = blinkState ? RED : leds.Color(50, 0, 0);
+    for (int i = sectionSize * 2; i < sectionSize * 3; i++) {
         leds.setPixelColor(i, redColor);
     }
     
-    // Section 3: BLUE = Reaction Zone
-    uint32_t blueColor = blinkState ? BLUE : leds.Color(0, 0, 50);
-    for (int i = sectionSize * 2; i < LED_COUNT; i++) {
-        leds.setPixelColor(i, blueColor);
+    // Section 4: WHITE = Color Shooter
+    uint32_t whiteColor = blinkState ? WHITE : leds.Color(50, 50, 50);
+    for (int i = sectionSize * 3; i < LED_COUNT; i++) {
+        leds.setPixelColor(i, whiteColor);
     }
     
     leds.show();
@@ -352,7 +401,6 @@ void initColorShooterGame() {
     
     // Reset player
     playerColorIndex = 0;
-    shootButtonReleased = true;
     
     // Reset game state
     score = 0;
@@ -480,25 +528,29 @@ void handleGameInput(unsigned long currentTime) {
         }
     }
     
-    // Hardware color buttons: select color AND shoot (requires release between shots)
-    bool anyButtonDown = false;
+    // Hardware color buttons: select color AND shoot
+    // Track which button was last pressed (-1 = none)
+    static int lastButtonPressed = -1;
+    
+    int currentButtonPressed = -1;
     for (int i = 0; i < NUM_COLORS; i++) {
         if (digitalRead(COLOR_BUTTON_PINS[i]) == LOW) {
-            anyButtonDown = true;
-            if (shootButtonReleased && currentTime - lastShootPress > DEBOUNCE_DELAY) {
-                playerColorIndex = i;
-                lastShootPress = currentTime;
-                shootButtonReleased = false;  // Must release before next shot
-                shootBullet();
-            }
+            currentButtonPressed = i;
             break;
         }
     }
     
-    // Track button release
-    if (!anyButtonDown) {
-        shootButtonReleased = true;
+    // Fire if: a button is pressed AND (it's a different button OR the previous button was released)
+    if (currentButtonPressed >= 0 && currentTime - lastShootPress > DEBOUNCE_DELAY) {
+        if (currentButtonPressed != lastButtonPressed || lastButtonPressed == -1) {
+            playerColorIndex = currentButtonPressed;
+            lastShootPress = currentTime;
+            shootBullet();
+        }
     }
+    
+    // Update last button state
+    lastButtonPressed = currentButtonPressed;
 }
 
 void shootBullet() {
@@ -600,14 +652,18 @@ void showHitEffect(int position) {
 }
 
 void updateDifficulty(unsigned long currentTime) {
-    // Increase difficulty every 10 seconds
+    // Increase difficulty over time
     unsigned long elapsed = currentTime - gameStartTime;
     
-    // Speed up enemies (minimum 80ms)
-    enemySpeed = max((long unsigned) 80, 200 - (elapsed / 10000) * 20);
+    // Speed up enemies: starts at 200ms, decreases by 20ms every 10 seconds, min 80ms
+    unsigned long speedReduction = (elapsed / 10000) * 20;
+    if (speedReduction > 120) speedReduction = 120;  // Cap at 200 - 80 = 120
+    enemySpeed = 200 - speedReduction;
     
-    // Spawn faster (minimum 800ms)
-    spawnInterval = max((long unsigned) 800, 2000 - (elapsed / 15000) * 200);
+    // Spawn faster: starts at 2000ms, decreases by 200ms every 15 seconds, min 800ms
+    unsigned long spawnReduction = (elapsed / 15000) * 200;
+    if (spawnReduction > 1200) spawnReduction = 1200;  // Cap at 2000 - 800 = 1200
+    spawnInterval = 2000 - spawnReduction;
 }
 
 void renderGame() {
@@ -741,22 +797,8 @@ void tugOfWarGame() {
         return;
     }
     
-    // Handle player input
+    // Handle player input (both sides controlled by buttons)
     handleTugOfWarInput(currentTime);
-    
-    // CPU pulls continuously
-    if (currentTime - lastCpuPull >= cpuPullInterval) {
-        lastCpuPull = currentTime;
-        
-        // Increase difficulty over time
-        unsigned long elapsed = currentTime - towGameStartTime;
-        cpuDifficultyMultiplier = 1.0 + (elapsed / 5000.0) * 0.2;  // +20% every 5 seconds
-        
-        // CPU pull with some randomness
-        float pull = cpuPullStrength * cpuDifficultyMultiplier;
-        pull += random(-100, 100) / 1000.0 * cpuPullVariance;
-        ropePosition += pull;  // Positive = towards CPU side (left)
-    }
     
     // Check win conditions
     if (ropePosition <= -ROPE_MAX) {
@@ -782,6 +824,10 @@ void tugOfWarGame() {
 }
 
 void handleTugOfWarInput(unsigned long currentTime) {
+    // Track button release state (must release before next pull)
+    static bool greenReleased = true;
+    static bool redReleased = true;
+    
     // Drain ALL available serial input (prevents buffer backup when mashing)
     while (Serial.available() > 0) {
         char input = Serial.read();
@@ -792,22 +838,34 @@ void handleTugOfWarInput(unsigned long currentTime) {
             return;
         }
         
-        // Any color key (w/r/b/y/g) to pull - each keypress counts!
-        if (input == 'w' || input == 'W' ||
-            input == 'r' || input == 'R' ||
-            input == 'b' || input == 'B' ||
-            input == 'y' || input == 'Y' ||
-            input == 'g' || input == 'G') {
-            ropePosition -= playerPullStrength;  // Negative = towards player side
+        // Green key to pull left (negative)
+        if (input == 'g' || input == 'G') {
+            ropePosition -= playerPullStrength;
+        }
+        // Red key to pull right (positive)
+        if (input == 'r' || input == 'R') {
+            ropePosition += playerPullStrength;
         }
     }
     
-    // Hardware buttons: Pull (any color button)
-    static unsigned long lastButtonPull = 0;
-    if (anyColorButtonPressed() && 
-        currentTime - lastButtonPull > 50) {  // Fast repeat for mashing
-        lastButtonPull = currentTime;
+    // Hardware buttons: Must release and press again for each pull
+    bool greenPressed = (digitalRead(BTN_GREEN_PIN) == LOW);
+    bool redPressed = (digitalRead(BTN_RED_PIN) == LOW);
+    
+    // Green button - pull left (negative)
+    if (greenPressed && greenReleased) {
+        greenReleased = false;
         ropePosition -= playerPullStrength;
+    } else if (!greenPressed) {
+        greenReleased = true;
+    }
+    
+    // Red button - pull right (positive)
+    if (redPressed && redReleased) {
+        redReleased = false;
+        ropePosition += playerPullStrength;
+    } else if (!redPressed) {
+        redReleased = true;
     }
 }
 
@@ -1082,6 +1140,450 @@ void showReactionZoneResult() {
     if (blinkState) {
         for (int i = 0; i < LED_COUNT; i++) {
             leds.setPixelColor(i, RED);
+        }
+    } else {
+        clearLEDs();
+    }
+    leds.show();
+}
+
+// ============================================
+// PACMAN GAME FUNCTIONS
+// ============================================
+
+void initPacmanGame() {
+    // Reset Pacman
+    pacmanPos = LED_COUNT / 2;
+    pacmanDir = 1;
+    pacmanPoweredUp = false;
+    pacmanLives = 3;
+    pacmanScore = 0;
+    pacmanLevel = 1;
+    pacmanGameOver = false;
+    pacmanWon = false;
+    pacmanButtonReleased = true;
+    
+    // Setup level
+    setupPacmanLevel();
+    
+    Serial.println("");
+    Serial.println("=== PACMAN 1D ===");
+    Serial.println("Eat all the dots! Avoid ghosts!");
+    Serial.println("");
+    Serial.println("Controls:");
+    Serial.println("  [WHITE/RED] - Move LEFT");
+    Serial.println("  [BLUE/GREEN] - Move RIGHT");
+    Serial.println("  [4+ buttons] - Back to Menu");
+    Serial.println("=================");
+}
+
+void setupPacmanLevel() {
+    // Place dots everywhere
+    dotsRemaining = 0;
+    int startPos = LED_COUNT / 2;
+    for (int i = 0; i < LED_COUNT; i++) {
+        dots[i] = true;
+        powerPellets[i] = false;
+        dotsRemaining++;
+    }
+    
+    // Clear Pacman's starting position (he's standing there)
+    dots[startPos] = false;
+    dotsRemaining--;
+    
+    // Place power pellets - max 3, semi-randomly distributed
+    int numPowerPellets = min(3, 2 + (pacmanLevel / 3));  // 2, 2, 2, 3, 3, 3...
+    
+    // Divide strip into zones and place one power pellet randomly in each zone
+    // This ensures they're spread out and the game remains beatable
+    int zoneSize = LED_COUNT / 3;
+    
+    for (int p = 0; p < numPowerPellets; p++) {
+        int zoneStart = p * zoneSize;
+        int ppPos = zoneStart + random(zoneSize);
+        
+        // Avoid Pacman's starting position
+        if (ppPos == startPos) {
+            ppPos = (ppPos + 1) % LED_COUNT;
+        }
+        
+        // Ensure position is valid
+        ppPos = constrain(ppPos, 0, LED_COUNT - 1);
+        
+        powerPellets[ppPos] = true;
+        if (dots[ppPos]) {
+            dots[ppPos] = false;
+            dotsRemaining--;
+        }
+    }
+    
+    // Setup ghosts - SLOW ramp: 1 ghost until level 4, then 2, then 3 at level 7+
+    int numGhosts;
+    if (pacmanLevel <= 3) numGhosts = 1;
+    else if (pacmanLevel <= 6) numGhosts = 2;
+    else numGhosts = 3;
+    
+    ghostColors[0] = RED;
+    ghostColors[1] = RED;
+    ghostColors[2] = RED;
+    
+    for (int i = 0; i < MAX_GHOSTS; i++) {
+        ghostActive[i] = (i < numGhosts);
+        ghostScared[i] = false;
+        if (ghostActive[i]) {
+            // Place ghosts far from Pacman's starting position (center)
+            // Ghost 0 at far left, Ghost 1 at far right, Ghost 2 at 1/4
+            if (i == 0) ghostPos[i] = 2;
+            else if (i == 1) ghostPos[i] = LED_COUNT - 3;
+            else ghostPos[i] = LED_COUNT / 5;
+            
+            // Ghosts start moving away from Pacman
+            ghostDir[i] = (ghostPos[i] < startPos) ? -1 : 1;
+        }
+    }
+    
+    // Speed settings - Pacman is ALWAYS faster than ghosts
+    // Pacman: 80ms (level 1) -> 50ms (level 7+)
+    pacmanSpeed = max(50, 80 - (pacmanLevel - 1) * 5);
+    // Ghosts: Always 1.5x slower than Pacman minimum
+    ghostSpeed = max(pacmanSpeed + 40, 180 - (pacmanLevel - 1) * 10);
+    
+    pacmanPos = LED_COUNT / 2;
+}
+
+void pacmanGame() {
+    unsigned long currentTime = millis();
+    
+    // Check for multi-button press to return to menu
+    if (multipleButtonsPressed()) {
+        delay(200);
+        showGameMenu();
+        return;
+    }
+    
+    if (pacmanGameOver) {
+        showPacmanResult();
+        
+        // Check for restart
+        while (Serial.available() > 0) {
+            char input = Serial.read();
+            if (input == '0') {
+                showGameMenu();
+                return;
+            }
+            if (input == 'w' || input == 'W' || input == 'r' || input == 'R' ||
+                input == 'b' || input == 'B' || input == 'y' || input == 'Y' ||
+                input == 'g' || input == 'G') {
+                initPacmanGame();
+                return;
+            }
+        }
+        
+        if (anyColorButtonPressed() && currentTime - pacmanGameOverTime > 1000) {
+            initPacmanGame();
+        }
+        return;
+    }
+    
+    // Handle input
+    handlePacmanInput(currentTime);
+    
+    // Move Pacman
+    if (currentTime - lastPacmanMove >= pacmanSpeed) {
+        lastPacmanMove = currentTime;
+        movePacman();
+    }
+    
+    // Move ghosts
+    if (currentTime - lastGhostMove >= ghostSpeed) {
+        lastGhostMove = currentTime;
+        moveGhosts();
+    }
+    
+    // Check power-up expiration
+    if (pacmanPoweredUp && currentTime >= powerUpEndTime) {
+        pacmanPoweredUp = false;
+        for (int i = 0; i < MAX_GHOSTS; i++) {
+            ghostScared[i] = false;
+        }
+    }
+    
+    // Check collisions
+    checkPacmanCollisions();
+    
+    // Render
+    renderPacman();
+}
+
+void handlePacmanInput(unsigned long currentTime) {
+    int moveDir = 0;
+    
+    // Check serial input
+    while (Serial.available() > 0) {
+        char input = Serial.read();
+        
+        if (input == '0') {
+            showGameMenu();
+            return;
+        }
+        
+        // Left: W, R (white, red)
+        if (input == 'w' || input == 'W' || input == 'r' || input == 'R') {
+            moveDir = 1;
+        }
+        // Right: B, Y, G (blue, yellow, green)
+        if (input == 'b' || input == 'B' || input == 'y' || input == 'Y' || 
+            input == 'g' || input == 'G') {
+            moveDir = -1;
+        }
+    }
+    
+    // Check hardware buttons
+    bool leftPressed = (digitalRead(BTN_WHITE_PIN) == LOW || digitalRead(BTN_RED_PIN) == LOW);
+    bool rightPressed = (digitalRead(BTN_BLUE_PIN) == LOW || digitalRead(BTN_YELLOW_PIN) == LOW || 
+                         digitalRead(BTN_GREEN_PIN) == LOW);
+    
+    if (leftPressed && pacmanButtonReleased) {
+        moveDir = 1;
+        pacmanButtonReleased = false;
+    } else if (rightPressed && pacmanButtonReleased) {
+        moveDir = -1;
+        pacmanButtonReleased = false;
+    }
+    
+    if (!leftPressed && !rightPressed) {
+        pacmanButtonReleased = true;
+    }
+    
+    // Apply direction change
+    if (moveDir != 0) {
+        pacmanDir = moveDir;
+    }
+}
+
+void movePacman() {
+    pacmanPos += pacmanDir;
+    
+    // Wrap around
+    if (pacmanPos >= LED_COUNT) pacmanPos = 0;
+    if (pacmanPos < 0) pacmanPos = LED_COUNT - 1;
+    
+    // Eat dot
+    if (dots[pacmanPos]) {
+        dots[pacmanPos] = false;
+        dotsRemaining--;
+        pacmanScore += 10;
+        checkLevelComplete();
+    }
+    
+    // Eat power pellet
+    if (powerPellets[pacmanPos]) {
+        powerPellets[pacmanPos] = false;
+        pacmanScore += 50;
+        pacmanPoweredUp = true;
+        powerUpEndTime = millis() + POWER_UP_DURATION;
+        
+        // Scare all ghosts
+        for (int i = 0; i < MAX_GHOSTS; i++) {
+            if (ghostActive[i]) {
+                ghostScared[i] = true;
+                ghostDir[i] = -ghostDir[i];  // Run away!
+            }
+        }
+        checkLevelComplete();
+    }
+}
+
+void checkLevelComplete() {
+    // Check if all dots AND power pellets are eaten
+    bool powerPelletsRemain = false;
+    for (int i = 0; i < LED_COUNT; i++) {
+        if (powerPellets[i]) {
+            powerPelletsRemain = true;
+            break;
+        }
+    }
+    
+    if (dotsRemaining <= 0 && !powerPelletsRemain && !pacmanGameOver) {
+        // Level complete! Show Pacman at final position
+        renderPacman();
+        
+        // Celebration flash
+        for (int flash = 0; flash < 3; flash++) {
+            for (int i = 0; i < LED_COUNT; i++) {
+                leds.setPixelColor(i, YELLOW);
+            }
+            leds.show();
+            delay(100);
+            clearLEDs();
+            leds.show();
+            delay(100);
+        }
+        
+        // Wait before next level
+        delay(500);
+        
+        // Start next level
+        pacmanLevel++;
+        pacmanScore += 100 * pacmanLevel;
+        Serial.print("Level ");
+        Serial.print(pacmanLevel);
+        Serial.println(" - GO!");
+        setupPacmanLevel();
+    }
+}
+
+void moveGhosts() {
+    for (int i = 0; i < MAX_GHOSTS; i++) {
+        if (!ghostActive[i]) continue;
+        
+        // Move ghost
+        ghostPos[i] += ghostDir[i];
+        
+        // Wrap around
+        if (ghostPos[i] >= LED_COUNT) ghostPos[i] = 0;
+        if (ghostPos[i] < 0) ghostPos[i] = LED_COUNT - 1;
+        
+        // Ghost AI: sometimes change direction towards/away from Pacman
+        if (random(100) < 20) {  // 20% chance to change behavior
+            int distToPacman = pacmanPos - ghostPos[i];
+            
+            // Handle wrap-around distance
+            if (abs(distToPacman) > LED_COUNT / 2) {
+                distToPacman = -distToPacman;
+            }
+            
+            if (ghostScared[i]) {
+                // Run away from Pacman
+                ghostDir[i] = (distToPacman > 0) ? -1 : 1;
+            } else {
+                // Chase Pacman
+                ghostDir[i] = (distToPacman > 0) ? 1 : -1;
+            }
+        }
+    }
+}
+
+void checkPacmanCollisions() {
+    for (int i = 0; i < MAX_GHOSTS; i++) {
+        if (!ghostActive[i]) continue;
+        
+        // Check if Pacman touched ghost
+        if (abs(pacmanPos - ghostPos[i]) <= 1 || 
+            abs(pacmanPos - ghostPos[i]) >= LED_COUNT - 1) {  // Handle wrap
+            
+            if (ghostScared[i]) {
+                // Eat ghost!
+                pacmanScore += 200;
+                ghostActive[i] = false;
+                
+                // Respawn ghost after delay (simplified: immediate respawn at start)
+                ghostPos[i] = (i == 0) ? 2 : LED_COUNT - 3;
+                ghostDir[i] = (i % 2 == 0) ? -1 : 1;  // Move away from center
+                // If power-up still active, new ghost is also scared!
+                ghostScared[i] = pacmanPoweredUp;
+                ghostActive[i] = true;
+            } else {
+                // Pacman dies!
+                pacmanLives--;
+                
+                if (pacmanLives <= 0) {
+                    pacmanGameOver = true;
+                    pacmanWon = false;
+                    pacmanGameOverTime = millis();
+                    Serial.println("");
+                    Serial.println("GAME OVER!");
+                    Serial.print("Score: ");
+                    Serial.print(pacmanScore);
+                    Serial.print(" Level: ");
+                    Serial.println(pacmanLevel);
+                } else {
+                    // Reset positions
+                    pacmanPos = LED_COUNT / 2;
+                    for (int j = 0; j < MAX_GHOSTS; j++) {
+                        if (ghostActive[j]) {
+                            if (j == 0) ghostPos[j] = 5;
+                            else if (j == 1) ghostPos[j] = LED_COUNT - 6;
+                            else ghostPos[j] = LED_COUNT / 4;
+                        }
+                    }
+                    Serial.print("Lives: ");
+                    Serial.println(pacmanLives);
+                    delay(500);  // Brief pause
+                }
+            }
+        }
+    }
+}
+
+void renderPacman() {
+    clearLEDs();
+    
+    // Draw dots (dim white)
+    for (int i = 0; i < LED_COUNT; i++) {
+        if (dots[i]) {
+            leds.setPixelColor(i, leds.Color(20, 20, 20));
+        }
+    }
+    
+    // Draw power pellets (bright white, pulsing)
+    static unsigned long lastPulse = 0;
+    static bool pulseState = true;
+    if (millis() - lastPulse > 200) {
+        lastPulse = millis();
+        pulseState = !pulseState;
+    }
+    for (int i = 0; i < LED_COUNT; i++) {
+        if (powerPellets[i]) {
+            leds.setPixelColor(i, pulseState ? WHITE : leds.Color(100, 100, 100));
+        }
+    }
+    
+    // Draw ghosts
+    for (int i = 0; i < MAX_GHOSTS; i++) {
+        if (ghostActive[i]) {
+            if (ghostScared[i]) {
+                // Scared ghosts are blue and blink near end of power-up
+                if (pacmanPoweredUp && (powerUpEndTime - millis() < 2000)) {
+                    // Blink when power-up almost over
+                    leds.setPixelColor(ghostPos[i], pulseState ? BLUE : WHITE);
+                } else {
+                    leds.setPixelColor(ghostPos[i], BLUE);
+                }
+            } else {
+                leds.setPixelColor(ghostPos[i], ghostColors[i]);
+            }
+        }
+    }
+    
+    // Draw Pacman (yellow, with "mouth" effect using brightness)
+    uint32_t pacColor = pacmanPoweredUp ? 
+        leds.Color(255, 255, 0) :  // Bright yellow when powered
+        leds.Color(200, 200, 0);   // Normal yellow
+    leds.setPixelColor(pacmanPos, pacColor);
+    
+    // Draw lives indicator at start of strip (small green dots)
+    for (int i = 0; i < min(pacmanLives, 3); i++) {
+        leds.setPixelColor(i, leds.Color(0, 30, 0));
+    }
+    
+    leds.show();
+}
+
+void showPacmanResult() {
+    static unsigned long lastBlink = 0;
+    static bool blinkState = true;
+    
+    unsigned long currentTime = millis();
+    if (currentTime - lastBlink >= 300) {
+        lastBlink = currentTime;
+        blinkState = !blinkState;
+    }
+    
+    // Flash yellow for Pacman
+    if (blinkState) {
+        for (int i = 0; i < LED_COUNT; i++) {
+            leds.setPixelColor(i, YELLOW);
         }
     } else {
         clearLEDs();
