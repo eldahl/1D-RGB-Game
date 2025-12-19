@@ -1,3 +1,4 @@
+
 # 1D RGB Game
 This marvelous game is very fun to play! Check it out!
 
@@ -14,3 +15,10 @@ Using WS2812 RGB LED's.
 <div align="center">
   <video src="https://github.com/user-attachments/assets/063a46e0-384a-4913-bd53-0c98d604a6bb" controls preload></video>
 </div>
+
+# Images
+<p align="center">
+  <img src="images/1.jpeg" width="49%">
+  <img src="images/2.jpeg" width="49%">
+</p>
+
