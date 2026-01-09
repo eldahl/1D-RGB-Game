@@ -1,13 +1,13 @@
 #include <Adafruit_NeoPixel.h>
 #include "WS2812_Definitions.h"
 
-#define PIN 5
-#define LED_COUNT 60
+#define PIN 2
+#define LED_COUNT 32
 #define BTN1 0
 #define BTN2 1
-#define BTN3 2 
-#define BTN4 3
-#define BTN5 4
+#define BTN3 3
+#define BTN4 4
+#define BTN5 5
 
 Adafruit_NeoPixel leds(LED_COUNT, PIN, NEO_GRB + NEO_KHZ800);
 
@@ -36,12 +36,17 @@ const uint32_t COLORS[] = {WHITE, RED, BLUE, YELLOW, GREEN};
 const byte PINS[] = {BTN1, BTN2, BTN3, BTN4, BTN5};
 
 void setup() {
-    for (int i = 0; i < 5; i++) pinMode(PINS[i], INPUT_PULLUP);
+    pinMode(PINS[0], INPUT);
+    pinMode(PINS[1], INPUT);
+    pinMode(PINS[2], INPUT_PULLUP);
+    pinMode(PINS[3], INPUT);
+    //pinMode(PINS[4], INPUT_PULLUP);
+
     leds.begin();
     leds.setBrightness(100);
 }
 
-bool btn(byte p) { return digitalRead(p) == LOW; }
+bool btn(byte p) { return digitalRead(p) == HIGH; }
 
 bool anyBtn() {
     for (int i = 0; i < 5; i++) if (btn(PINS[i])) return true;
@@ -55,13 +60,30 @@ void fill(uint32_t c) {
 
 void loop() {
     if (game == 0) {
-        for (int i = 0; i < 20; i++) leds.setPixelColor(i, BLUE);
-        for (int i = 20; i < 40; i++) leds.setPixelColor(i, RED);
-        for (int i = 40; i < 60; i++) leds.setPixelColor(i, WHITE);
+        for (int i = 0; i < 11; i++) leds.setPixelColor(i, BLUE);
+        for (int i = 11; i < 21; i++) leds.setPixelColor(i, RED);
+        for (int i = 21; i < 32; i++) leds.setPixelColor(i, WHITE);
+
+        if(btn(BTN1)) {
+            leds.setPixelColor(1, GREEN);
+        }
+        if(btn(BTN2)) {
+            leds.setPixelColor(2, GREEN);
+        }
+        if(btn(BTN3)) {
+            leds.setPixelColor(3, GREEN);
+        }
+        if(btn(BTN4)) {
+            leds.setPixelColor(4, GREEN);
+        }
+        if(btn(BTN5)) {
+            leds.setPixelColor(5, GREEN);
+        }
         leds.show();
-        if (btn(BTN1)) { game = 1; initCS(); delay(200); }
-        else if (btn(BTN2)) { game = 2; initTow(); delay(200); }
-        else if (btn(BTN3)) { game = 3; initRZ(); delay(200); }
+
+        //if (btn(BTN1)) { game = 1; initCS(); delay(200); }
+        //else if (btn(BTN2)) { game = 2; initTow(); delay(200); }
+        //else if (btn(BTN3)) { game = 3; initRZ(); delay(200); }
     }
     else if (game == 1) runCS();
     else if (game == 2) runTow();
