@@ -1,16 +1,16 @@
 #include <Adafruit_NeoPixel.h>
 #include "WS2812_Definitions.h"
 
-#define PIN 16            // ESP32: Use GPIO16 for NeoPixel data
+#define PIN 4
 #define LED_COUNT 60
 
 // Color buttons (ESP32-compatible GPIOs)
 // All game controls use these 5 buttons
-#define BTN_WHITE_PIN  18
-#define BTN_RED_PIN    19
-#define BTN_BLUE_PIN   21
-#define BTN_YELLOW_PIN 22
-#define BTN_GREEN_PIN  23
+#define BTN_WHITE_PIN  6
+#define BTN_RED_PIN    7
+#define BTN_BLUE_PIN   8
+#define BTN_YELLOW_PIN 9
+#define BTN_GREEN_PIN  10
 
 // Library for WS2812 by Adafruit
 Adafruit_NeoPixel leds = Adafruit_NeoPixel(LED_COUNT, PIN, NEO_GRB + NEO_KHZ800);
@@ -140,7 +140,8 @@ bool pacmanButtonReleased = true;
 
 void setup() {
     Serial.begin(9600);
-    randomSeed(analogRead(0));
+    Serial.println("Starting arcade game");
+    randomSeed(analogRead(26));
     
     // Setup color buttons
     for (int i = 0; i < NUM_COLORS; i++) {
