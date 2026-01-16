@@ -3,19 +3,16 @@
 This is a marvelous game that grabs the attention of the player from the get-go!
 It features an WS2812 RGB LED chain for the display, and a 3D printed box with 5 buttons for the controls.
 
-# Video
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/063a46e0-384a-4913-bd53-0c98d604a6bb" controls preload></video>
-</div>
-
 # Images
 ![1](https://github.com/user-attachments/assets/318a09fc-df99-4c7e-8e53-160ea434e11a)
-![2](https://github.com/user-attachments/assets/64a37a74-3306-4387-8119-be42e32a4301)
-![3](https://github.com/user-attachments/assets/c413355b-ad98-41d2-8f02-de84bbbf2353)
-![4](https://github.com/user-attachments/assets/d6d27c59-31f4-469b-9dab-b27c4051bd9b)
 
 <p align="center">
-  <img width="715" height="1227" alt="5" src="https://github.com/user-attachments/assets/543ee47f-2a68-4630-afc4-720687e9f1d4" />
+  <img width="49%" src="https://github.com/user-attachments/assets/c413355b-ad98-41d2-8f02-de84bbbf2353">
+  <img width="49%" src="https://github.com/user-attachments/assets/d6d27c59-31f4-469b-9dab-b27c4051bd9b">
+</p>
+
+<p align="center">
+  <img width="49%" alt="5" src="https://github.com/user-attachments/assets/543ee47f-2a68-4630-afc4-720687e9f1d4" />
 </p>
 
 # Making it yourself
@@ -42,6 +39,8 @@ While that is printing, go ahead with the wiring:
 - Join 1 plain wire and 5 wires with cable shoes attached, together in a screw terminal wire connector. This will be the ground connections for the buttons. Connect the 1 plain wire to the GND on the Pico.
 - Connect 5 wires with cable shoes attached to each of these: GP6, GP7, GP8, GP9, GP10.
 
+**Note**: See the pin diagram below.
+
 ### WS2812 LED chain connector
 <p align="center">
   <img width="300" alt="6" src="https://github.com/user-attachments/assets/bb679de6-1904-4573-bd7a-037b3ae9c640" />
@@ -52,8 +51,16 @@ While that is printing, go ahead with the wiring:
 - Connect 1 wire to GP4 on the Pico, and the other end to the middle of the 3-pin male header.
 - Connect 1 wire to VBUS on the Pico, and the other end to the right side of the 3-pin male header.
 
+### Pin diagram
+Here is a pin connection overview for the Pico:
+<p align="center">
+  <img width="600" alt="pico-wires2" src="https://github.com/user-attachments/assets/68ad8de8-c405-4c9d-965d-da6a360d61b3" />
+</p>
 
 
-Next
+### End result
+A completed wiring can be seen here:
+![pico-wires1](https://github.com/user-attachments/assets/c568f63e-e886-4937-ba0e-f12787059869)
+
 
 
