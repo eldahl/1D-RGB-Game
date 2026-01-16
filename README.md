@@ -27,7 +27,7 @@ It features an WS2812 RGB LED chain for the display, and a 3D printed box with 5
 - 1x 3-pin female headers.
 - 1x screw terminal wire connector.
 
-## Walkthrough
+## Hardware walkthrough
 First off, grab the 3D file for the case on Thingiverse, and get it started with the printing: [https://www.thingiverse.com/thing:7273005](https://www.thingiverse.com/thing:7273005)
 
 While that is printing, go ahead with the wiring:
@@ -62,9 +62,23 @@ Here is a pin connection overview for the Pico:
 </p>
 
 
-### End result
+### Wiring end result
 A completed wiring can be seen here:
 ![pico-wires1](https://github.com/user-attachments/assets/c568f63e-e886-4937-ba0e-f12787059869)
 
 
+## Software 
+To upload the Arduino sketch to the Raspberry Pi Pico, first download this repository.
+
+Next, refer to this repository for adding the Raspberry Pi Pico as a compilation target from Arduino: [https://github.com/user-attachments/assets/a47ea654-ef25-4f5a-ad28-ef42598852a9](https://github.com/user-attachments/assets/a47ea654-ef25-4f5a-ad28-ef42598852a9).
+- Go to File > Preferences, and add the URL: `https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json`.
+- Go to the boards manager, and search for `Pico` and add support for the Raspberry Pi Pico:
+<p align="center">
+  <img width="376" height="246" alt="arduino-board-add-pico" src="https://github.com/user-attachments/assets/0603bfbe-b72a-4786-ac28-4420c50febc9" />
+</p>
+
+Next, simply select the correct COM port, and set the board as `Raspberry Pi Pico`, and upload the sketch.
+
+# Credits
+Made by Esben Christensen / Eldahl for InnoPixel Aps
 
