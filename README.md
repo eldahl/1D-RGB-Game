@@ -34,6 +34,10 @@ While that is printing, go ahead with the wiring:
 - Assemble the arcade buttons if needed.
 - Strip insulation from both ends of all the wires.
 - Put cable shoes on one side of 10 of the wires.
+<p align="center">
+  <img width="49%" src="https://github.com/user-attachments/assets/c80b30e9-b21b-4e76-b701-649ed163ec53" />
+  <img width="49%" src="https://github.com/user-attachments/assets/a47ea654-ef25-4f5a-ad28-ef42598852a9" />
+</p>
 
 ### Button connections
 - Join 1 plain wire and 5 wires with cable shoes attached, together in a screw terminal wire connector. This will be the ground connections for the buttons. Connect the 1 plain wire to the GND on the Pico.
