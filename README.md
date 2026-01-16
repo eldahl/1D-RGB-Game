@@ -79,6 +79,9 @@ Next, refer to this repository for adding the Raspberry Pi Pico as a compilation
 
 Next, simply select the correct COM port, and set the board as `Raspberry Pi Pico`, and upload the sketch.
 
+# Final note
+See if you can come up with some better games than the ones in this repository!
+
 # Credits
 Made by Esben Christensen / Eldahl for InnoPixel Aps
 
