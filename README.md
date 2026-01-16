@@ -1,6 +1,6 @@
 
 # 1D RGB Game
-This is a marvelous game that grabs the attention of the player from the get-go!
+This is a marvelous game that grabs the attention of the player from the get-go!  
 It features an WS2812 RGB LED chain for the display, and a 3D printed box with 5 buttons for the controls.
 
 # Images
