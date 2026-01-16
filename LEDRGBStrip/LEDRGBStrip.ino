@@ -1,16 +1,16 @@
 #include <Adafruit_NeoPixel.h>
 #include "WS2812_Definitions.h"
 
-#define PIN 16            // ESP32: Use GPIO16 for NeoPixel data
+#define PIN 4
 #define LED_COUNT 60
 
 // Color buttons (ESP32-compatible GPIOs)
 // All game controls use these 5 buttons
-#define BTN_WHITE_PIN  18
-#define BTN_RED_PIN    19
-#define BTN_BLUE_PIN   21
-#define BTN_YELLOW_PIN 22
-#define BTN_GREEN_PIN  23
+#define BTN_WHITE_PIN  6
+#define BTN_RED_PIN    7
+#define BTN_BLUE_PIN   8
+#define BTN_YELLOW_PIN 9
+#define BTN_GREEN_PIN  10
 
 // Library for WS2812 by Adafruit
 Adafruit_NeoPixel leds = Adafruit_NeoPixel(LED_COUNT, PIN, NEO_GRB + NEO_KHZ800);
@@ -140,7 +140,8 @@ bool pacmanButtonReleased = true;
 
 void setup() {
     Serial.begin(9600);
-    randomSeed(analogRead(0));
+    Serial.println("Starting arcade game");
+    randomSeed(analogRead(26));
     
     // Setup color buttons
     for (int i = 0; i < NUM_COLORS; i++) {
@@ -239,6 +240,12 @@ void showGameMenu() {
     Serial.println("");
     Serial.println("========================================");
     currentGame = GAME_MENU;
+    
+    // Wait for all buttons to be released before accepting new input
+    while (anyColorButtonPressed()) {
+        delay(10);
+    }
+    delay(200);  // Extra debounce delay
 }
 
 void checkGameSelection() {
@@ -275,31 +282,77 @@ void checkGameSelection() {
         }
     }
     
-    // Check hardware color buttons
-    if (digitalRead(BTN_WHITE_PIN) == LOW) {
+    // Check hardware buttons - read all at once
+    bool white = (digitalRead(BTN_WHITE_PIN) == LOW);
+    bool red = (digitalRead(BTN_RED_PIN) == LOW);
+    bool blue = (digitalRead(BTN_BLUE_PIN) == LOW);
+    bool yellow = (digitalRead(BTN_YELLOW_PIN) == LOW);
+    bool green = (digitalRead(BTN_GREEN_PIN) == LOW);
+    
+    int count = white + red + blue + yellow + green;
+    
+    // Debug: print button states when any button is pressed
+    if (count > 0) {
+        Serial.print("Buttons: W=");
+        Serial.print(white);
+        Serial.print(" R=");
+        Serial.print(red);
+        Serial.print(" B=");
+        Serial.print(blue);
+        Serial.print(" Y=");
+        Serial.print(yellow);
+        Serial.print(" G=");
+        Serial.print(green);
+        Serial.print(" count=");
+        Serial.println(count);
+    }
+    
+    // Only select a game if exactly one button is pressed
+    if (count != 1) return;
+    
+    delay(50);  // Debounce - wait and re-check
+    
+    // Re-read to confirm
+    white = (digitalRead(BTN_WHITE_PIN) == LOW);
+    red = (digitalRead(BTN_RED_PIN) == LOW);
+    blue = (digitalRead(BTN_BLUE_PIN) == LOW);
+    yellow = (digitalRead(BTN_YELLOW_PIN) == LOW);
+    green = (digitalRead(BTN_GREEN_PIN) == LOW);
+    
+    count = white + red + blue + yellow + green;
+    if (count != 1) return;  // Button state changed, abort
+    
+    Serial.print("Confirmed: W=");
+    Serial.print(white);
+    Serial.print(" R=");
+    Serial.print(red);
+    Serial.print(" B=");
+    Serial.print(blue);
+    Serial.print(" Y=");
+    Serial.print(yellow);
+    Serial.print(" G=");
+    Serial.println(green);
+    
+    // Start the appropriate game
+    if (white) {
+        Serial.println("Starting Color Shooter");
         currentGame = GAME_COLOR_SHOOTER;
         initColorShooterGame();
-        delay(200);  // Debounce
-        return;
-    }
-    if (digitalRead(BTN_RED_PIN) == LOW) {
+    } else if (red) {
+        Serial.println("Starting Tug of War");
         currentGame = GAME_TUG_OF_WAR;
         initTugOfWarGame();
-        delay(200);  // Debounce
-        return;
-    }
-    if (digitalRead(BTN_BLUE_PIN) == LOW) {
+    } else if (blue) {
+        Serial.println("Starting Reaction Zone");
         currentGame = GAME_REACTION_ZONE;
         initReactionZoneGame();
-        delay(200);  // Debounce
-        return;
-    }
-    if (digitalRead(BTN_YELLOW_PIN) == LOW) {
+    } else if (yellow) {
+        Serial.println("Starting Pacman");
         currentGame = GAME_PACMAN;
         initPacmanGame();
-        delay(200);  // Debounce
-        return;
     }
+    
+    delay(200);  // Post-selection debounce
 }
 
 void runGameMenu() {
@@ -938,7 +991,6 @@ void showTugOfWarResult() {
 // ============================================
 // REACTION ZONE GAME FUNCTIONS
 // ============================================
-
 void initReactionZoneGame() {
     rzLightPosition = LED_COUNT - 1;  // Start at top
     rzLightDirection = -1;            // Moving down initially
@@ -948,7 +1000,7 @@ void initReactionZoneGame() {
     rzLevel = 1;
     rzScore = 0;
     rzGameOver = false;
-    rzWaitingForRelease = false;
+    rzWaitingForRelease = true;       // Must release button before first press
     rzLastMove = millis();
     
     Serial.println("");
